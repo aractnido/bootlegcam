@@ -9,10 +9,9 @@ had the best angle at each moment. One continuous full-show video with a title c
 mastered, lossless FLAC per song (de-clipped, EQ'd, loud like a great bootleg should be, with
 embedded cover art 🖼️). And the whole set as one continuous lossless FLAC.
 
-This is a [Claude Code](https://claude.com/claude-code) skill. `SKILL.md` holds the agent's
-instructions, written for an agent to read and drive the scripts in `scripts/`. 🤖 You bring the
-footage and tell the agent which raw clip belongs to which song, and it figures out the sync,
-the editing, and the mastering.
+This is an agentic skill. `SKILL.md` holds the agent's instructions, written for an AI agent to
+read and drive the scripts in `scripts/`. 🤖 You bring the footage and tell the agent which raw
+clip belongs to which song, and it figures out the sync, the editing, and the mastering.
 
 ## Why this is hard 🧩
 
