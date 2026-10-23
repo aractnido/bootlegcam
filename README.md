@@ -51,6 +51,3 @@ scripts\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
 py scripts\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
 ```
 
-## License 📄
-
-MIT. Do whatever you want with it.
