@@ -22,7 +22,12 @@ Run from the show root (the folder containing Videos\ and where Audio\ should la
 param(
   [string]$Video = "Videos",
   [string]$Dst = "Audio",
-  [string]$CoverDir = (Join-Path $env:TEMP "phone-multicam-covers"),
+  # Empty by default so it tracks $Dst (see below) -- defaulting this to a scratch/temp folder
+  # instead caused a real bug: Master-Audio.ps1's own default CoverDir is "<Audio>\AlbumArt",
+  # so covers rendered here under $env:TEMP were never where that script went looking, and
+  # every mastered FLAC silently shipped with no embedded cover art. Pass -CoverDir explicitly
+  # only if you want covers to land somewhere other than next to the FLACs they're embedded in.
+  [string]$CoverDir = "",
   [string]$Subtitle = "",
   [string]$FullShowCoverSrc = "",
   [int]$Size = 1200,
@@ -33,6 +38,7 @@ param(
   [switch]$Force
 )
 $ErrorActionPreference = "Stop"
+if (-not $CoverDir) { $CoverDir = Join-Path $Dst "AlbumArt" }
 
 function Get-CreationTime {
   # Reads the real-world recording-start timestamp build_song.py now stamps on every

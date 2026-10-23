@@ -715,6 +715,24 @@ grep for `\$\w+:` in the new copy and fix the same way -- this is a general Powe
 not specific to this one chain. Always check the terminal output for `[FAIL]` rows after a
 mastering run, the same way you already check `build_song.py`'s SUMMARY for `FFMPEG ERROR`.
 
+**Known-fixed bug: cover art silently missing from every mastered FLAC.** `Build-Audio.ps1`
+renders each song's cover PNG and `Master-Audio.ps1` re-embeds it during the final encode, but
+the two scripts used to default to *different* folders for it -- `Build-Audio.ps1`'s `-CoverDir`
+defaulted to a scratch folder under `$env:TEMP`, while `Master-Audio.ps1`'s defaulted to the
+literal string `"Audio\AlbumArt"` (not derived from its own `-Audio` param, so pointing `-Audio`
+at anything other than a folder literally named `Audio` -- e.g. a `AudioV3`-style rebuild --
+made it look in the wrong place, or a folder that doesn't exist at all). Neither script errored;
+`Master-Audio.ps1`'s cover-embed step just silently skipped, so every mastered FLAC published
+with no embedded cover and nothing in the log said so. Fixed by making both scripts' `-CoverDir`
+default to `""` and compute `Join-Path <their own audio-folder param> "AlbumArt"` at runtime, so
+the two always agree without needing `-CoverDir` passed explicitly, whatever the folder's named
+-- plus `Master-Audio.ps1` now prints a yellow warning if it still ends up with no cover folder.
+If you ever need to backfill covers onto FLACs that already got mastered without them, you don't
+need to re-run the mastering chain (that would double-process already-correct audio) -- grab a
+frame from each song's video the same way `Make-Cover` does, then remux it in with `-c:a copy
+-c:v png -disposition:v:0 attached_pic` (exactly what `Embed-Cover` does), which only adds the
+cover stream and never touches the audio samples.
+
 All the EQ/loudness numbers are parameters with the defaults above -- re-tune per show if the
 balance sounds off; a quieter/more conservative streaming target is also reasonable (try
 -14 LUFS instead of -10 if "loud" isn't the goal).

@@ -34,7 +34,11 @@ Requires: sox and ffmpeg (with the adeclip filter) on PATH.
 #>
 param(
   [string]$Audio = "Audio",
-  [string]$CoverDir = "Audio\AlbumArt",
+  # Empty by default so it tracks $Audio (see below). A hardcoded literal here used to mean
+  # that pointing -Audio at a folder other than the literal "Audio" (e.g. a VideosV3-style
+  # rebuild's "AudioV3") left this still looking at "Audio\AlbumArt" -- the wrong folder, or
+  # one that doesn't exist -- and every song got mastered with no cover art, silently.
+  [string]$CoverDir = "",
 
   # Identity / tagging -- fill in for your own show; Comment stays honest about provenance
   # so this is never mistaken for an actual official release if ever shared.
@@ -76,7 +80,11 @@ Require-Command sox
 Require-Command ffmpeg
 
 $AudioPath = (Resolve-Path $Audio).Path
+if (-not $CoverDir) { $CoverDir = Join-Path $Audio "AlbumArt" }
 $CoverPath = if (Test-Path $CoverDir) { (Resolve-Path $CoverDir).Path } else { $null }
+if (-not $CoverPath) {
+  Write-Host "WARNING: no cover-art folder at '$CoverDir' -- FLACs will be (re)written with NO embedded cover. Run Build-Audio.ps1 first (it writes covers there by default), or pass -CoverDir." -ForegroundColor Yellow
+}
 
 $eqChain = "highpass=f=$HighpassHz," +
            "equalizer=f=${BassCutHz}:t=q:w=1:g=$BassCutDb," +
