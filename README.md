@@ -19,11 +19,13 @@ Phone footage from a real concert is messy in specific, predictable ways. There'
 timecode, so two people's phones pointed at the stage at the "same moment" are actually offset
 by however long it took each of them to hit record. Clips aren't simultaneous multi-angle
 coverage nearly as often as you'd think either, since just as often it's one person's recording
-broken into several files because they stopped and restarted the camera app. iPhones shoot HDR
-that most players can't decode correctly out of the box, portrait clips need to live on a
-landscape canvas without ugly black bars, phone mics clip and boom and lose the top end in a
-loud venue 🔊, and someone's phone keeps rolling past the end of a song into the next one while
-someone else's clip cuts out right as the real moment starts.
+broken into several files because they stopped and restarted the camera app.
+
+On top of that there's the format mess. iPhones shoot HDR that most players can't decode
+correctly out of the box, portrait clips need to live on a landscape canvas without ugly black
+bars, and phone mics clip and boom and lose the top end in a loud venue 🔊. Someone's phone also
+keeps rolling past the end of a song into the next one while someone else's clip cuts out right
+as the real moment starts.
 
 `bootlegcam` groups clips into real-world scenes by their actual recording timestamp first, then
 picks whichever clip has the best audio signal as the source-of-truth track for each scene,
