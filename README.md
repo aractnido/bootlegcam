@@ -1,38 +1,30 @@
-# bootlegcam
+# bootlegcam 🎸📱
 
 Turn everyone's shaky phone videos from the show into one clean bootleg.
 
 You and a few other people filmed a concert on your phones — different angles, different
-songs, no shared timecode, nobody hit record at the same moment. `bootlegcam` takes that whole
-messy folder and turns it into:
-
-1. **Per-song video** — one clean multicam edit per song, cutting between whoever had the best
-   angle at each moment.
-2. **Full-show video** — every song stitched into one continuous video, with a title card per
-   song.
-3. **Per-song audio** — mastered, lossless FLAC per song (de-clipped, EQ'd, loud like a great
-   bootleg), with embedded cover art.
-4. **Full-show audio** — the whole set as one continuous lossless FLAC.
+songs, no shared timecode, nobody hit record at the same moment. 🎶 `bootlegcam` takes that
+whole messy folder and turns it into four things: a clean multicam edit per song, cutting
+between whoever had the best angle at each moment; one continuous full-show video with a title
+card per song; a mastered, lossless FLAC per song (de-clipped, EQ'd, loud like a great bootleg
+should be, with embedded cover art 🖼️); and the whole set as one continuous lossless FLAC.
 
 This is a [Claude Code](https://claude.com/claude-code) skill — `SKILL.md` is the agent's
-instructions, written for an agent to read and drive the scripts in `scripts/`. You bring the
+instructions, written for an agent to read and drive the scripts in `scripts/`. 🤖 You bring the
 footage and tell the agent which raw clip belongs to which song; it figures out the sync, the
 editing, and the mastering.
 
-## Why this is hard
+## Why this is hard 🧩
 
-Phone footage from a real concert is messy in specific, predictable ways:
-
-- **No shared timecode.** Two people's phones pointed at the stage at the "same moment" are
-  actually offset by however long it took them both to hit record.
-- **Clips aren't simultaneous multi-angle coverage as often as you'd think.** Just as often
-  it's one person's recording broken into several files because they stopped and restarted the
-  camera app.
-- **iPhones shoot HDR** that most players can't decode correctly out of the box.
-- **Portrait clips** need to live on a landscape canvas without ugly black bars.
-- **Phone mics clip, boom, and lose the top end** in a loud venue.
-- Someone's phone keeps rolling past the end of a song into the next one; someone else's clip
-  cuts out right as the real moment starts.
+Phone footage from a real concert is messy in specific, predictable ways. There's no shared
+timecode, so two people's phones pointed at the stage at the "same moment" are actually offset
+by however long it took each of them to hit record — and clips aren't simultaneous multi-angle
+coverage nearly as often as you'd think; just as often it's one person's recording broken into
+several files because they stopped and restarted the camera app. iPhones shoot HDR that most
+players can't decode correctly out of the box, portrait clips need to live on a landscape canvas
+without ugly black bars, phone mics clip and boom and lose the top end in a loud venue 🔊, and
+someone's phone keeps rolling past the end of a song into the next one while someone else's clip
+cuts out right as the real moment starts.
 
 `bootlegcam` groups clips into real-world scenes by their actual recording timestamp *first*,
 picks whichever clip has the best audio signal as the source-of-truth track for each scene
@@ -40,16 +32,13 @@ picks whichever clip has the best audio signal as the source-of-truth track for 
 way around. Read `SKILL.md` for the full reasoning, the bugs that got found fixing this on real
 footage, and why each design choice exists.
 
-## Requirements
+## Requirements ⚙️
 
-- `ffmpeg`/`ffprobe` on PATH, built with `zscale`, `tonemap`, `adeclip`, and `h264_nvenc`
-  support.
-- An NVIDIA GPU — every video encode uses it, with no CPU fallback.
-- `sox` on PATH (audio mastering only).
-- Python 3 with `numpy`.
-- PowerShell (for the audio-publishing scripts).
+You'll need `ffmpeg`/`ffprobe` on PATH built with `zscale`, `tonemap`, `adeclip`, and
+`h264_nvenc` support, an NVIDIA GPU (every video encode uses it, with no CPU fallback), `sox` on
+PATH for audio mastering, Python 3 with `numpy`, and PowerShell for the audio-publishing scripts.
 
-## Quick start
+## Quick start 🚀
 
 See `SKILL.md` for the full walkthrough. Short version, from your show's root folder:
 
@@ -61,6 +50,6 @@ scripts\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
 py scripts\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
 ```
 
-## License
+## License 📄
 
 MIT — do whatever you want with it.
