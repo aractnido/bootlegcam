@@ -79,34 +79,35 @@ audio cross-correlation only refines *where exactly* to splice, once that's esta
 
 ## Quick Start
 
-The scripts live in `scripts\`, next to this SKILL.md.
+The scripts live in `scripts\windows\`, next to this SKILL.md (a Windows-only pipeline today;
+`scripts\macos\` is reserved for a future macOS port).
 
 ```powershell
 cd <show-root>
 
 # optional, in a separate window: guards step 1 against OOM on a clip-heavy show --
 # see "RAM usage scales with clip count per song" below
-scripts\Watch-FfmpegMemory.ps1
+scripts\windows\Watch-FfmpegMemory.ps1
 
 # 1. Build every song found in Masters\ into Videos\NN-Title.mp4. --metadata-dir is optional
 # (feeds the audio-quality/blackout/zoom-glow-informed scene assembly -- see "Fixed:
 # audio/video desync" below) but strongly recommended once those analysis passes have run.
-py scripts\build_song.py Masters --all Videos --metadata-dir Masters-Standardized\metadata
+py scripts\windows\build_song.py Masters --all Videos --metadata-dir Masters-Standardized\metadata
 
 # (or just one song, e.g. to re-run after fixing a clip)
-py scripts\build_song.py Masters 07 "Videos\07-Song Title.mp4" --metadata-dir Masters-Standardized\metadata
+py scripts\windows\build_song.py Masters 07 "Videos\07-Song Title.mp4" --metadata-dir Masters-Standardized\metadata
 
 # 2. Publish audio once Videos\ has final per-song files
-scripts\Build-Audio.ps1 -Subtitle "Artist - Venue - Date"
+scripts\windows\Build-Audio.ps1 -Subtitle "Artist - Venue - Date"
 
 # 3. Optional: master the published audio (EQ + loudness + de-click, see below)
-scripts\Master-Audio.ps1 -Artist "Band Name" -Album "Live at Venue" -Date "YYYY-MM-DD"
+scripts\windows\Master-Audio.ps1 -Artist "Band Name" -Album "Live at Venue" -Date "YYYY-MM-DD"
 
 # 4. If step 3 ran, swap the mastered audio back into Videos\ (-c:v copy, no video re-encode)
-scripts\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
+scripts\windows\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
 
 # 5. Optional: one continuous full-show video, title card per song
-py scripts\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
+py scripts\windows\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
 ```
 
 `Production\Scripts\Run-V2-Pipeline.ps1` in this show's own folder chains all five steps for a
@@ -375,7 +376,7 @@ each clip's standalone treatment before trusting it inside a multi-clip scene, a
 redoing this per-clip work inside every future scene-assembly experiment.
 
 ```powershell
-py scripts\preprocess_masters.py Masters Masters-Standardized [--res WxH] [--fill-fraction 0.75]
+py scripts\windows\preprocess_masters.py Masters Masters-Standardized [--res WxH] [--fill-fraction 0.75]
 ```
 
 Per clip, by orientation/resolution:

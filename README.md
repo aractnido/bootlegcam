@@ -45,10 +45,10 @@ publishing scripts need PowerShell.
 See `SKILL.md` for the full walkthrough. Short version, from your show's root folder.
 
 ```powershell
-py scripts\build_song.py Masters --all Videos --metadata-dir Masters-Standardized\metadata
-scripts\Build-Audio.ps1 -Subtitle "Artist - Venue - Date"
-scripts\Master-Audio.ps1 -Artist "Band Name" -Album "Live at Venue" -Date "YYYY-MM-DD"
-scripts\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
-py scripts\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
+py scripts\windows\build_song.py Masters --all Videos --metadata-dir Masters-Standardized\metadata
+scripts\windows\Build-Audio.ps1 -Subtitle "Artist - Venue - Date"
+scripts\windows\Master-Audio.ps1 -Artist "Band Name" -Album "Live at Venue" -Date "YYYY-MM-DD"
+scripts\windows\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
+py scripts\windows\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
 ```
 
