@@ -807,6 +807,38 @@ without NVENC would just quietly reintroduce the exact unnoticed-for-a-long-time
 section exists to prevent. If NVENC genuinely isn't available, let it fail loudly (ffmpeg's own
 "Cannot load nvcuda.dll"/"No capable devices found" error) rather than silently degrading.
 
+## Editing already-standardized audio/video: cut-and-paste beats reprocessing
+
+Once a song's audio or video has gone through its full pipeline (mastered FLAC, titled/muxed
+MP4), a later fix to that specific file -- add a missing intro, swap a cover, trim a tail --
+should default to **extracting the needed piece and concatenating/remuxing it in**, not
+re-running the file (or its raw/master source) back through the full build. Two real examples
+from a show built with this skill:
+
+- **Full-show video missing its show-opener.** Rather than re-running `build_song.py` +
+  `titlecard_intro.py` + `build_fullshow_video.py` over again, the fix was a single
+  `-f concat -c copy` stream-copy of the already-built intro video onto the already-built
+  full-show video -- same codec params on both sides (confirmed via `ffprobe` first), so it
+  joined losslessly with zero re-encoding and zero risk to either side's already-correct
+  content.
+- **A mastered per-song FLAC missing its own intro.** The fix was extracting the missing
+  ~43s directly from a neighboring already-built video's audio track and concatenating it
+  onto the existing mastered FLAC (re-encoding only because finished FLACs can't
+  stream-copy-concat -- see the `00-FullShow.flac` gotcha below -- which is still a lossless
+  operation for the untouched portion, not a reprocessing one). The WRONG instinct here,
+  caught mid-execution, was running that new 43s segment through the full
+  SoX-upsample/declip/EQ/loudnorm/limiter/downsample chain before splicing it in: that's
+  needless extra processing on audio nobody asked to be remastered, and any mismatch between
+  that improvised one-off chain and the real `Master-Audio.ps1` run risks an audible seam at
+  the join. Concatenation alone was the actual request.
+
+The general rule: reach for `build_song.py`/`Master-Audio.ps1`/the rest of the full chain when
+something was built WRONG (a real bug in the logic, needing a true rebuild from raw clips).
+Reach for extraction + concat/remux when something that was built RIGHT is simply missing a
+piece that exists elsewhere, already correctly processed -- re-deriving it from raw/master
+source in that case is wasted work at best, and a double-processing or mismatched-mastering
+risk at worst.
+
 ## Gotchas
 
 - **Needs real `creation_time` metadata.** A clip that's been re-exported or re-encoded
