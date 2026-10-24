@@ -864,6 +864,26 @@ piece that exists elsewhere, already correctly processed -- re-deriving it from 
 source in that case is wasted work at best, and a double-processing or mismatched-mastering
 risk at worst.
 
+## Full-show cover image (`make_show_cover.py`)
+
+The last, optional-but-worth-it polish on a show: a 16:9 cover/thumbnail image for the
+full-show video itself (e.g. a YouTube thumbnail), separate from the per-song audio covers
+`Build-Audio.ps1` already makes. **Once the full-show video is built, ask the user whether they
+have a standout photo for this** -- something that captures the show's identity rather than
+more of the same concert footage: a pre-show projected visual, a striking crowd shot, signage,
+merch, anything with its own character (a real example: a photo of the venue's flag/banner wall
+from fans around the world, taken before the show started). If they don't have one in mind,
+suggest one yourself: look through the show's raw photos (not just video clips) for something
+visually distinct, or as a last resort grab a wide, bright frame from the full-show video.
+
+`make_show_cover.py <source_image> <output.jpg> "<title>" "<subtitle>"` builds it: crops the
+source to 16:9 **without stretching** (always crop to the target aspect ratio first, centered
+by default, then scale -- stretching a non-16:9 photo visibly distorts everything in it, a crop
+never does), nudges brightness/saturation up slightly so it reads as more striking on a
+thumbnail-sized preview, and centers the title (and optional subtitle) in a dark band across
+the middle -- deliberately a different visual language from the per-song covers' bottom-left
+panel, since this image stands alone rather than sitting in an album grid next to 15 others.
+
 ## Gotchas
 
 - **Needs real `creation_time` metadata.** A clip that's been re-exported or re-encoded
