@@ -671,6 +671,19 @@ truncates to the first track's duration). Its cover defaults to a frame from the
 song (usually the most representative shot); override with `-FullShowCoverSrc <path>` if
 there's a more iconic clip (e.g. a striking venue visual).
 
+**The automatic midpoint grab (`Make-Cover`'s default `-At 0.5`) is a starting point, not a
+guarantee.** Live concert lighting is unpredictable -- the exact middle of a song can land on
+a pitch-black blackout beat, an empty stage, or just a dull crowd shot, same as any other
+single timestamp could. Two real examples from a show built with this skill: a song's midpoint
+frame came out essentially solid black, and a different song's midpoint was visually
+unremarkable when a far more iconic moment (bright silhouette/color-lighting visuals the
+artist actually asked for) existed elsewhere in the same song. Treat the auto-grabbed cover as
+provisional -- if it looks bad (too dark/plain, doesn't represent the song), build a quick
+contact sheet (`select='not(mod(t\,N))',tile=RxC` over the song's video) to find a better
+moment, regenerate just that one cover frame at the chosen timestamp with the same filter
+chain `Make-Cover` uses, and re-embed it with `Embed-Cover` (a pure remux, `-c:a copy` --
+never touches the already-mastered audio).
+
 ## Mastering (`Master-Audio.ps1`)
 
 Optional post-process on the FLACs `Build-Audio.ps1` already made. Phone-in-a-crowd audio has
