@@ -316,55 +316,73 @@ def resolve_song_units(clip_infos):
         covered = [c for c in scene if c["path"] in covered_paths]
         orphans = [c for c in scene if c["path"] not in covered_paths]
 
-        def zone_unit(lo, hi, anchor):
-            """One lead-in/tail-out zone, spanning EXACTLY [lo, hi) -- the real-time gap between
-            the scene's own full extent and truth's own window -- using every clip in the whole
-            scene that overlaps this span AT ALL (not just ones fully CONTAINED in it), trimmed
-            to it by the same plan_scene_video()/build_scene_segment() machinery as the main
-            span. Replaces an earlier design that picked one "most coverage" clip as a fixed
-            zone boundary and only folded in orphans fully contained inside THAT clip's own
-            span: a clip that overlaps the zone but also extends past its edge (not contained,
-            not inside truth's window either) fell through that design as an untracked orphan
-            and got replayed whole, from scratch, elsewhere in the song -- confirmed on real
-            footage on three songs (Unforgiven, Bell Tolls, The Day That Never Comes). Fixed by
-            deriving [lo, hi) directly from the scene's own real extent (gap-free by
-            build_scenes()'s construction) instead of from a single anchor clip's own span, so
-            there's no "contained vs. merely overlapping" distinction left to miss -- any clip
-            touching the zone at all is a candidate for it, same overlap test as `covered`'s own
-            computation above."""
+        def make_zone(lo, hi, anchor, forward):
+            """One lead-in/tail-out zone, spanning EXACTLY [lo, hi) where hi (tail) or lo
+            (lead) is always the ANCHOR's own real edge -- never a boundary independent of it
+            -- so the anchor can always actually supply real audio for the whole zone (this is
+            the bug an earlier version of this fix had: a zone boundary derived from the
+            scene's own extent, not from the anchor's own reach, let the anchor be asked for
+            audio it didn't have -- confirmed on Enter Sandman, a 587s zone anchored on a clip
+            only 403s long, silently handing back 184s of nothing once muxed and measured).
+            Every clip in the scene that overlaps [lo, hi) at all is still a video candidate
+            for it (trimmed to the window by plan_scene_video()), same as before. Returns the
+            unit plus the subset of those candidates that are fully CONTAINED in [lo, hi) --
+            i.e. have nothing left to contribute beyond this zone -- so the caller can retire
+            them; one that isn't contained (extends past hi, or before lo) stays available to
+            become the next zone's own anchor instead of being silently dropped."""
             dur = (hi - lo).total_seconds()
             if dur <= 0.1:
-                return None
+                return None, []
             zone_clips = [c for c in scene if clip_overlap(c, lo, hi)]
+            fully_inside = ([c for c in zone_clips if c["end"] <= hi] if forward
+                             else [c for c in zone_clips if c["start"] >= lo])
             if len(zone_clips) == 1:
                 t0 = max((lo - anchor["start"]).total_seconds(), 0.0)
                 t1 = min((hi - anchor["start"]).total_seconds(), anchor["dur"])
-                return {"kind": "trim", "clip": anchor, "t0": t0, "t1": t1}
-            zone_truth = {**anchor, "start": lo, "end": hi, "dur": dur,
-                          "audio_real_start": anchor["start"]}
-            return {"kind": "multi", "clips": zone_clips, "truth": zone_truth}
+                unit = {"kind": "trim", "clip": anchor, "t0": t0, "t1": t1}
+            else:
+                zone_truth = {**anchor, "start": lo, "end": hi, "dur": dur,
+                              "audio_real_start": anchor["start"]}
+                unit = {"kind": "multi", "clips": zone_clips, "truth": zone_truth}
+            return unit, fully_inside
 
-        lead_pool = [c for c in scene if c["start"] < truth["start"]]
-        lead_unit = None
-        if lead_pool:
-            lead_anchor = min(lead_pool, key=lambda c: c["start"])
-            lead_unit = zone_unit(lead_anchor["start"], truth["start"], lead_anchor)
-            absorbed = {c["path"] for c in (lead_unit["clips"] if lead_unit["kind"] == "multi" else [lead_anchor])}
-            orphans = [c for c in orphans if c["path"] not in absorbed]
+        # Tail: chain forward from truth's own end. Each link's anchor must itself overlap
+        # truth's window (so its own start is guaranteed <= the link's lo, keeping audio in
+        # sync) for the FIRST link; a later link's anchor just needs to genuinely extend past
+        # the previous link's reach, which already guarantees the same thing one link over.
+        tail_units = []
+        lo = truth["end"]
+        candidates = [c for c in covered if c["end"] > lo]
+        anchor = max(candidates, key=lambda c: c["end"]) if candidates else None
+        while anchor:
+            unit, fully_inside = make_zone(lo, anchor["end"], anchor, forward=True)
+            if unit:
+                tail_units.append(unit)
+            used = {c["path"] for c in fully_inside}
+            orphans = [c for c in orphans if c["path"] not in used]
+            lo = anchor["end"]
+            candidates = [c for c in covered + orphans if c["start"] < lo and c["end"] > lo]
+            anchor = max(candidates, key=lambda c: c["end"]) if candidates else None
 
-        tail_pool = [c for c in scene if c["end"] > truth["end"]]
-        tail_unit = None
-        if tail_pool:
-            tail_anchor = max(tail_pool, key=lambda c: c["end"])
-            tail_unit = zone_unit(truth["end"], tail_anchor["end"], tail_anchor)
-            absorbed = {c["path"] for c in (tail_unit["clips"] if tail_unit["kind"] == "multi" else [tail_anchor])}
-            orphans = [c for c in orphans if c["path"] not in absorbed]
+        # Lead: the mirror image, chaining backward from truth's own start.
+        lead_units = []
+        hi = truth["start"]
+        candidates = [c for c in covered if c["start"] < hi]
+        anchor = min(candidates, key=lambda c: c["start"]) if candidates else None
+        while anchor:
+            unit, fully_inside = make_zone(anchor["start"], hi, anchor, forward=False)
+            if unit:
+                lead_units.append(unit)
+            used = {c["path"] for c in fully_inside}
+            orphans = [c for c in orphans if c["path"] not in used]
+            hi = anchor["start"]
+            candidates = [c for c in covered + orphans if c["end"] > hi and c["start"] < hi]
+            anchor = min(candidates, key=lambda c: c["start"]) if candidates else None
+        lead_units.reverse()  # built innermost (closest to truth) first
 
-        if lead_unit:
-            units.append(lead_unit)
+        units.extend(lead_units)
         units.append({"kind": "multi", "clips": covered, "truth": truth})
-        if tail_unit:
-            units.append(tail_unit)
+        units.extend(tail_units)
         if orphans:
             units.extend(resolve_song_units(orphans))
 
