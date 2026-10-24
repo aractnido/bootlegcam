@@ -671,18 +671,30 @@ truncates to the first track's duration). Its cover defaults to a frame from the
 song (usually the most representative shot); override with `-FullShowCoverSrc <path>` if
 there's a more iconic clip (e.g. a striking venue visual).
 
-**The automatic midpoint grab (`Make-Cover`'s default `-At 0.5`) is a starting point, not a
-guarantee.** Live concert lighting is unpredictable -- the exact middle of a song can land on
-a pitch-black blackout beat, an empty stage, or just a dull crowd shot, same as any other
-single timestamp could. Two real examples from a show built with this skill: a song's midpoint
-frame came out essentially solid black, and a different song's midpoint was visually
-unremarkable when a far more iconic moment (bright silhouette/color-lighting visuals the
-artist actually asked for) existed elsewhere in the same song. Treat the auto-grabbed cover as
-provisional -- if it looks bad (too dark/plain, doesn't represent the song), build a quick
-contact sheet (`select='not(mod(t\,N))',tile=RxC` over the song's video) to find a better
-moment, regenerate just that one cover frame at the chosen timestamp with the same filter
-chain `Make-Cover` uses, and re-embed it with `Embed-Cover` (a pure remux, `-c:a copy` --
-never touches the already-mastered audio).
+**A single fixed timestamp (e.g. the exact midpoint) isn't a safe default for a cover frame.**
+Live concert lighting is unpredictable -- the exact middle of a song can land on a pitch-black
+blackout beat, an empty stage, or just a dull crowd shot. Two real examples from a show built
+with this skill: a song's midpoint frame came out essentially solid black, and a different
+song's midpoint was visually unremarkable when a far more iconic moment (bright
+silhouette/color-lighting visuals the artist actually asked for) existed elsewhere in the same
+song.
+
+`Make-Cover`'s default (`-At` left unset, i.e. `-1`) now picks the frame automatically via
+`pick_cover_frame.py`: sample several frames across the **middle third** of the song's video
+(deliberately not the first/last third, which can bleed in the previous/next song -- see
+"Cross-song content bleed" above), average their color, and return whichever single sampled
+frame's color is closest to that average -- a cheap way to land on something visually typical
+of the song instead of a lucky/unlucky single instant. Pass an explicit `-At <0.0-1.0>` to
+`Make-Cover` to force one specific fraction-of-duration timestamp instead (used for `00-FullShow`'s
+own cover, where "longest song's own midpoint" is the deliberate choice).
+
+Even the averaged pick can occasionally be wrong for a genuinely unusual case (e.g. a one-off
+visual callout the artist specifically wants, like a giant projected silhouette). When it is,
+treat the auto-grabbed cover as provisional: build a quick contact sheet
+(`select='not(mod(t\,N))',tile=RxC` over the song's video) to find the actual moment wanted,
+regenerate just that one cover frame at the chosen timestamp with the same filter chain
+`Make-Cover` uses, and re-embed it with `Embed-Cover` (a pure remux, `-c:a copy` -- never
+touches the already-mastered audio).
 
 ## Mastering (`Master-Audio.ps1`)
 

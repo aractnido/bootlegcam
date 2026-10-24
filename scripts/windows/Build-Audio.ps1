@@ -76,9 +76,20 @@ function Invoke-FfmpegWithRetry {
 }
 
 function Make-Cover {
-  param([string]$SrcVideo, [string]$Title, [string]$CoverPng, [double]$At = 0.5)
+  # $At < 0 (the default) means "pick automatically" -- see pick_cover_frame.py: samples the
+  # middle third of the video (never the first/last third, which can bleed in the previous or
+  # next song -- see "Cross-song content bleed" in SKILL.md) and returns whichever sampled
+  # frame's color is closest to that window's own average, so an unlucky single timestamp
+  # (e.g. a lighting blackout at the exact midpoint) doesn't become the permanent cover. Pass
+  # an explicit $At (0.0-1.0, fraction of total duration) only to force one specific moment.
+  param([string]$SrcVideo, [string]$Title, [string]$CoverPng, [double]$At = -1)
   $dur = [double](& ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 $SrcVideo)
-  $t = $dur * $At
+  if ($At -ge 0) {
+    $t = $dur * $At
+  } else {
+    $picker = Join-Path $PSScriptRoot "pick_cover_frame.py"
+    $t = [double](& py $picker $SrcVideo)
+  }
   $titleFile = Join-Path $CoverDir "_title.txt"
   Set-Content -Path $titleFile -Value $Title -NoNewline -Encoding utf8
   $fontEsc = $FontFile -replace ':', '\:'
