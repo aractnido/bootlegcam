@@ -445,11 +445,15 @@ def build_segment_filter(path, t0, t1, label, w, h, portrait):
             f"[{{IN}}:v]{seg},setpts=PTS-STARTPTS,{TM},split=2[{label}a][{label}b];"
             f"[{label}a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma=35[{label}bg];"
             f"[{label}b]scale=-2:{h}[{label}m];"
-            f"[{label}bg][{label}m]overlay=(W-w)/2:0,fps={FPS},{pad}[{label}];"
+            f"[{label}bg][{label}m]overlay=(W-w)/2:0,setsar=1,fps={FPS},{pad}[{label}];"
         ), label
     else:
+        # setsar=1 is required, not cosmetic: a source with a non-1:1 pixel aspect ratio
+        # (e.g. Nikon's anamorphic 561:560) otherwise carries that SAR through scale=, and
+        # concat refuses to join it with a sibling segment whose SAR came out 1:1 ("Input
+        # link parameters ... do not match the corresponding output link parameters").
         return (
-            f"[{{IN}}:v]{seg},setpts=PTS-STARTPTS,{TM},scale={w}:{h},fps={FPS},{pad}[{label}];"
+            f"[{{IN}}:v]{seg},setpts=PTS-STARTPTS,{TM},scale={w}:{h},setsar=1,fps={FPS},{pad}[{label}];"
         ), label
 
 
