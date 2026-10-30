@@ -483,21 +483,29 @@ def compute_correlation_offsets(scene, truth):
     {path: timedelta} of the correction to ADD to a clip's own recorded start."""
     offsets = {truth["path"]: timedelta(0)}
     truth_audio, sr = load_wav(truth["path"])
+    # load_wav() reads truth's WHOLE file, so correlation offsets are relative to the file's own
+    # start -- for a synthetic lead-in/tail-out zone truth (resolve_song_units()), that's
+    # audio_real_start, not the zone-anchored truth["start"]. Predicting against truth["start"]
+    # made every zone correlation "disagree" by the zone's own offset into the file and get
+    # thrown out for the raw timestamp (confirmed: a 0.88s A/V slip on a Madonna speech scene).
+    real_start = truth.get("audio_real_start", truth["start"])
     for c in scene:
         if c["path"] == truth["path"]:
             continue
-        predicted = (c["start"] - truth["start"]).total_seconds()
+        predicted = (c["start"] - real_start).total_seconds()
         audio, _ = load_wav(c["path"], sr)
-        # best_offset() assumes it's placing a SHORTER clip somewhere inside a LONGER one's
-        # timeline -- not guaranteed now that truth is chosen by quality, not by duration. A
-        # candidate longer than truth has no valid "fits inside" placement for that model and
-        # would crash np.argmax on an empty slice; fall back to the timestamp estimate.
+        # best_offset() places a SHORTER clip inside a LONGER one's timeline -- not guaranteed
+        # now that truth is chosen by quality, not by duration. For a candidate longer than
+        # truth, place truth inside the candidate instead and negate. (This used to skip
+        # correlation and trust the timestamp, which is whole-second precision and off by
+        # phone clock drift: confirmed 1.38s A/V slip, 2 iPhones, same speech scene.)
         if len(audio) > len(truth_audio):
-            off = predicted
+            rev, conf = best_offset(truth_audio, audio, sr)
+            off = -rev
         else:
             off, conf = best_offset(audio, truth_audio, sr)
-            if abs(off - predicted) > 5.0:
-                off = predicted
+        if abs(off - predicted) > 5.0:
+            off = predicted
         offsets[c["path"]] = timedelta(seconds=off - predicted)
     return offsets
 
@@ -734,18 +742,36 @@ def build_scene_segment(unit, w, h, in_idx, filt, gen, shakiness_map, overrides=
         filt.append(f.format(IN=in_idx[c["path"]]))
         alab = gen("sa")
         filt.append(f"[{in_idx[c['path']]}:{c['audio_idx']}]atrim={t0}:{t1},asetpts=PTS-STARTPTS[{alab}];")
-        return lab, alab, t1 - t0
+        cuts = [{"clip": c, "t0": t0, "t1": t1, "real_start": c["start"] + timedelta(seconds=t0),
+                 "audio_clip": c, "kind": unit["kind"]}]
+        return lab, alab, t1 - t0, cuts
 
     scene, truth = unit["clips"], unit["truth"]
     offsets = compute_correlation_offsets(scene, truth)
     plan = plan_scene_video(scene, truth, shakiness_map, offsets, overrides)
 
     labels = []
+    cuts = []
     for clip, t0, t1 in plan:
         lab = gen("sc")
         f, lab = build_segment_filter(clip["path"], round(t0, 3), round(t1, 3), lab, w, h, clip["portrait"])
         filt.append(f.format(IN=in_idx[clip["path"]]))
         labels.append(lab)
+        eff_start = clip["start"] + offsets.get(clip["path"], timedelta(0))
+        cuts.append({"clip": clip, "t0": round(t0, 3), "t1": round(t1, 3),
+                     "real_start": eff_start + timedelta(seconds=t0), "audio_clip": truth, "kind": "multi",
+                     "sync_correction_s": offsets.get(clip["path"], timedelta(0)).total_seconds()})
+
+    # QA invariant (lesson from vivecut's EDL span bug): the video planned for a scene must cover
+    # exactly its truth audio's span. plan_scene_video() clamps clip-local in/out to what each clip
+    # really has -- if that ever eats time, video runs short and every later moment in the scene
+    # slips against the continuous audio. Fail loud in the log instead of trusting the plan.
+    planned = sum(c["t1"] - c["t0"] for c in cuts)
+    if abs(planned - truth["dur"]) > 0.05:
+        print(f"QA WARNING: span mismatch in scene anchored on {os.path.basename(truth['path'])}: "
+              f"video plan {planned:.3f}s vs audio truth {truth['dur']:.3f}s -- A/V will drift", flush=True)
+        for c in cuts:
+            c["qa_warning"] = f"scene video {planned:.3f}s != audio {truth['dur']:.3f}s"
 
     raw = gen("scnraw")
     vlab = gen("scn")
@@ -764,11 +790,57 @@ def build_scene_segment(unit, w, h, in_idx, filt, gen, shakiness_map, overrides=
     t0_audio = max(0.0, (truth["start"] - real_start).total_seconds())
     filt.append(f"[{in_idx[truth['path']]}:{truth['audio_idx']}]"
                 f"atrim={t0_audio}:{t0_audio + truth['dur']},asetpts=PTS-STARTPTS[{alab}];")
-    return vlab, alab, truth["dur"]
+    return vlab, alab, truth["dur"], cuts
+
+
+def _iso(dt):
+    return dt.replace(tzinfo=timezone.utc).isoformat()
+
+
+def write_song_sidecar(out_path, clip_infos, units, scene_segs, song_start, run_dur):
+    """`<out_path>.json` next to the video: every cut on the song's render timeline -> its source
+    clip, clip-local in/out, real-world time, and the audio truth underneath. Scenes join with an
+    XFADE-second overlap, exactly as the ffmpeg graph does, so render times match the output file.
+    Same spirit as the ai-director's per-song sidecars: answers "where did this shot come from"
+    without re-deriving the plan."""
+    transitions, scene_offset = [], 0.0
+    for si, (unit, (_, _, dur, cuts)) in enumerate(zip(units, scene_segs)):
+        t = scene_offset
+        for cut in cuts:
+            d = cut["t1"] - cut["t0"]
+            transitions.append({
+                "index": len(transitions), "scene": si, "scene_kind": cut["kind"],
+                "render_time_start": round(t, 3), "render_time_end": round(t + d, 3), "duration": round(d, 3),
+                "clip_file": cut["clip"]["path"], "clip_local_start": cut["t0"], "clip_local_end": cut["t1"],
+                "orientation": "portrait" if cut["clip"]["portrait"] else "landscape",
+                "real_world_start": _iso(cut["real_start"]),
+                "real_world_end": _iso(cut["real_start"] + timedelta(seconds=d)),
+                "audio_source": cut["audio_clip"]["path"],
+                "sync_correction_s": round(cut.get("sync_correction_s", 0.0), 3),
+                **({"qa_warning": cut["qa_warning"]} if cut.get("qa_warning") else {}),
+            })
+            t += d
+        scene_offset += dur - XFADE
+    title = title_from_filename(os.path.basename(out_path))
+    sidecar = {
+        "video": os.path.basename(out_path),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generator": "bootlegcam build_song.py",
+        "song_num": os.path.basename(out_path)[:2], "title": title,
+        "real_world_start": _iso(song_start),
+        "duration": round(run_dur, 3),
+        "scene_crossfade_s": XFADE,
+        "clips": [{"clip_file": c["path"], "recorded_start": _iso(c["start"]), "duration": round(c["dur"], 3)}
+                  for c in clip_infos],
+        "total_cuts": len(transitions),
+        "transitions": transitions,
+    }
+    with open(out_path + ".json", "w", encoding="utf-8") as fh:
+        json.dump(sidecar, fh, indent=2, ensure_ascii=False)
 
 
 def build_song(clip_paths, out_path, w=W_DEFAULT, h=H_DEFAULT, next_song_start=None,
-                metadata_dir=None, shakiness_map=None, overrides=None):
+                metadata_dir=None, shakiness_map=None, overrides=None, sidecar_only=False):
     shakiness_map = shakiness_map or {}
     clip_infos = [load_clip_info(p, metadata_dir) for p in clip_paths]
     clip_infos = apply_next_song_cutoff(clip_infos, next_song_start)
@@ -782,8 +854,8 @@ def build_song(clip_paths, out_path, w=W_DEFAULT, h=H_DEFAULT, next_song_start=N
 
     scene_segs = [build_scene_segment(u, w, h, in_idx, filt, gen, shakiness_map, overrides) for u in units]
 
-    vchain, achain, run_dur = scene_segs[0]
-    for vlab, alab, dur in scene_segs[1:]:
+    vchain, achain, run_dur, _ = scene_segs[0]
+    for vlab, alab, dur, _ in scene_segs[1:]:
         vout = gen("v")
         filt.append(f"[{vchain}][{vlab}]xfade=transition=fade:duration={XFADE}:offset={max(run_dur - XFADE, 0):.3f}[{vout}];")
         aout = gen("a")
@@ -792,6 +864,11 @@ def build_song(clip_paths, out_path, w=W_DEFAULT, h=H_DEFAULT, next_song_start=N
         run_dur = run_dur + dur - XFADE
 
     filter_complex = "\n".join(filt)
+    if sidecar_only:
+        # recompute the plan and (re)write only the JSON -- for a video already rendered with
+        # this same plan, no re-encode
+        write_song_sidecar(out_path, clip_infos, units, scene_segs, song_start, run_dur)
+        return True, filter_complex
     creation_time_str = song_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     cmd = ["ffmpeg", "-y", "-v", "error", "-stats"]
     for p in inputs:
@@ -827,6 +904,7 @@ def build_song(clip_paths, out_path, w=W_DEFAULT, h=H_DEFAULT, next_song_start=N
         # rendered -- creation_time alone is invisible in Explorer/most file browsers.
         epoch = song_start.replace(tzinfo=timezone.utc).timestamp()
         os.utime(out_path, (epoch, epoch))
+        write_song_sidecar(out_path, clip_infos, units, scene_segs, song_start, run_dur)
     return ok, filter_complex
 
 
@@ -894,6 +972,9 @@ def main():
     args = sys.argv[1:]
     w, h = _parse_res(args)
     metadata_dir = _parse_metadata_dir(args)
+    sidecar_only = "--sidecar-only" in args
+    if sidecar_only:
+        args.remove("--sidecar-only")
     masters = args[0]
     shakiness_map = load_shakiness_map(masters)
     groups, title_source = group_master_files(masters)
@@ -909,7 +990,8 @@ def main():
             cutoff = _next_song_start(groups, order, prefix)
             try:
                 ok, _ = build_song(clips, out, w, h, next_song_start=cutoff,
-                                    metadata_dir=metadata_dir, shakiness_map=shakiness_map)
+                                    metadata_dir=metadata_dir, shakiness_map=shakiness_map,
+                                    sidecar_only=sidecar_only)
                 log.append((prefix, title, len(clips), "OK" if ok else "FFMPEG ERROR"))
             except Exception as e:
                 log.append((prefix, title, len(clips), f"EXCEPTION: {e}"))
@@ -924,7 +1006,7 @@ def main():
             raise SystemExit(f"No clips found for prefix {prefix} in {masters}")
         cutoff = _next_song_start(groups, order, prefix)
         build_song(sorted(groups[prefix]), out, w, h, next_song_start=cutoff,
-                   metadata_dir=metadata_dir, shakiness_map=shakiness_map)
+                   metadata_dir=metadata_dir, shakiness_map=shakiness_map, sidecar_only=sidecar_only)
 
 
 if __name__ == "__main__":

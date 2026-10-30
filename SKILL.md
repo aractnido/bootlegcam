@@ -110,6 +110,20 @@ scripts\windows\Mux-MasteredAudio.ps1 -Video Videos -Audio Audio
 py scripts\windows\build_fullshow_video.py Videos "Videos\FullShow-Video.mp4"
 ```
 
+**Provenance sidecars.** Every `build_song.py` render writes `<song>.mp4.json` next to the video:
+each cut's render-time span, source clip, clip-local in/out, real-world UTC window, the audio truth
+underneath, and the sync correction applied (same spirit as vivecut's per-song sidecars -- "where did
+the shot at 2:10 come from" becomes a JSON lookup). `build_fullshow_video.py` writes
+`<fullshow>.mp4.json` with each song's span on the full-show timeline (handy for YouTube chapter
+timestamps). To backfill without re-encoding: `build_song.py ... --sidecar-only` recomputes the
+plan and writes only the JSON (valid only if the video was rendered with that same plan), and
+`build_fullshow_video.py <videos> <out> --json-only` does the same for the show.
+`build_fullshow_video.py` also refuses to assemble a show from a song file whose real duration
+doesn't match its own sidecar's planned duration -- a killed render leaves a truncated mp4 that's
+still valid and playable and would otherwise concat silently. It also writes absolute paths into
+its concat list now: the concat demuxer resolves relative entries against the list file's folder,
+so a relative `<videos_dir>` used to fail the final concat after every title pass had finished.
+
 `Production\Scripts\Run-V2-Pipeline.ps1` in this show's own folder chains all five steps for a
 real end-to-end run -- a good reference for how they fit together on a show with its own
 show-specific driver script.
@@ -277,9 +291,33 @@ audio truth track (`pick_truth_audio()`), decoupled from framing entirely.
 *longer* one's timeline -- not guaranteed once the reference track is chosen by audio quality
 rather than by duration. A candidate longer than the truth track it's being checked against has
 no valid "fits inside" placement for that model and would crash with `ValueError: attempt to
-get argmax of an empty sequence`. Guarded in `compute_correlation_offsets()`: when a candidate's
-own audio is longer than truth's, skip correlation entirely and fall straight back to the
-timestamp-derived predicted offset.
+get argmax of an empty sequence`. Originally guarded by skipping correlation and trusting the
+timestamp -- **that guard was itself a sync bug, now fixed**: `creation_time` is whole-second
+precision (MOV headers can't hold more) and two phones' clocks disagree by a second or more, so
+"just trust the timestamp" put video visibly off its audio. Confirmed on a Madonna speech scene
+(the user caught it by eye: "audio vs video... more than 1 second"): a long iPhone 15 Pro Max clip
+under a shorter iPhone 14 Pro truth track was placed 1.38s off. Fix: for a candidate longer than
+truth, correlate the OTHER way (truth inside the candidate, `best_offset(truth, candidate)`) and
+negate -- same 5s distrust rule against the timestamp prediction either way.
+
+**Second sync bug in the same function, same scene**: for a synthetic lead-in/tail-out zone truth
+(`resolve_song_units()`'s zone units -- `start` anchored to the ZONE, `audio_real_start` holding
+the clip's real start), the timestamp prediction was measured from the zone start while
+`best_offset()` measures from the truth FILE's start (`load_wav()` reads the whole file). Every
+zone correlation therefore "disagreed" by the zone's own offset into the file (81s here), tripped
+the 5s distrust rule, and silently fell back to the raw timestamp -- 0.88s off on the same speech.
+Fix: predict against `truth.get("audio_real_start", truth["start"])`, same as the audio trim
+already did. **Audit recipe** (cheap, no encode): dry-run every song's `resolve_song_units()` and
+compare old vs new offsets per clip -- on Madonna Seattle only song 04 moved (1.38s/0.88s); every
+other song's plan was identical, so only that one needed a re-render. Still open: a lead-in zone's
+own boundary is cut where the TIMESTAMP says the truth clip starts, not the corrected position, so
+a corrected scene can replay ~0.4s across its first crossfade (A/V stays matched, it's a repeat,
+not a slip) -- fixing that means feeding corrected starts into `resolve_song_units()` itself.
+
+**QA invariant** (lesson borrowed from vivecut's EDL span bug): `build_scene_segment()` now checks
+that a scene's planned video cuts sum to exactly its audio truth's duration and prints
+`QA WARNING: span mismatch ...` (also recorded on the cuts in the sidecar JSON) if not -- a plan
+that clamps away time would otherwise drift every later moment in the scene against the audio.
 
 **Detecting a bad digital zoom (blurry + overexposed "glow"): `detect_zoom_glow.py`.** A
 digitally-zoomed phone shot in a dark venue often loses detail (soft/blurry, since it's just
@@ -327,12 +365,32 @@ before trusting it unsupervised.
 `batch_zoom_glow.py <masters_dir> <metadata_out_dir>` runs this over every clip in one process
 (loads the GPU model once), writing `<clip>-zoomglow.json` per clip.
 
+**GPU-decode variant: `batch_zoom_glow_gpu_hostloop.py`** (same args, same JSON, same sample
+times -- prefer it). The original spawns one CPU-decoding ffmpeg per sampled frame (a full seek +
+decode each). This one decodes each clip ONCE with NVDEC (`-hwaccel_output_format cuda`) and picks
+samples with a timestamp-only `select='gte(t,T0+I*selected_n)'` on CUDA frames, so unsampled frames
+never leave GPU memory. Its name says "hostloop" on purpose: each SAMPLED frame still goes
+GPU -> host (hwdownload + rotate + BGR) -> GPU (torch tensor for the detector) -> host (box for the
+HSV metrics) -- inherent to a PyTorch model fed from an ffmpeg pipe, bounded by the 1/s sample rate,
+not the frame rate. Don't copy that pattern into anything that touches every frame. Verified
+pixel-identical to the original's frames (frame-index ground truth, portrait and landscape) with
+identical zoom events, 2.7-5.9x faster. **Gotcha found building it**: an `fps=1/I` filter (with or
+without input `-ss`) rounds each sample to the nearest output slot -- ~half an interval late vs
+`grab_frame()`'s accurate seek, enough to flip person detections; `select` on the absolute grid
+returns exactly "first frame at/after t", the same thing an accurate `-ss t` does. No
+`transpose_cuda` exists, so it decodes with `-noautorotate` and applies the display-matrix
+rotation itself after the download (theta = -ffprobe's `rotation`).
+
 **Blackout/dead-footage detection: `detect_blackouts.py`.** A clip can also just be pointed at
 the floor/a pocket for a while before or after its usable portion -- found by a direct user
 review ("07-The Day That Never Comes-C is bad, a contributor was pointing to the floor... but if
 there's nothing else available, use it"). Unlike the zoom/glow check, this doesn't need object
-detection -- ffmpeg's own `blackdetect` filter (single decode pass, CPU only) finds black/blank
-intervals directly. Flags whether a clip opens or ends black specifically (the "pointed away
+detection -- ffmpeg's own `blackdetect` filter (single decode pass) finds black/blank intervals
+directly. Decode and a downscale run on the GPU (NVDEC + `scale_cuda` to 480x270) so only tiny
+frames reach `blackdetect` -- NVDEC alone barely helped (76.5s vs 74.5s on a 4K HEVC clip) because
+downloading full 4K 10-bit frames was the real cost; with the downscale it's 16.2s. Verified against
+the CPU full-res pass: same intervals within a frame or two (5.305-7.140s vs 5.322-7.123s on a real
+blackout), and no false intervals on clean clips. Flags whether a clip opens or ends black specifically (the "pointed away
 for a while" pattern), separate from a brief black cut in the middle. Run via the same
 `<masters_dir> <metadata_out_dir>` batch pattern as above.
 
