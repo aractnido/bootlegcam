@@ -17,7 +17,7 @@ Usage:
 whose name doesn't start with digits (e.g. a prior run's own output sitting in the same
 folder) is ignored, so this is safe to point at the same folder it writes into.
 """
-import sys, os, glob, re, subprocess, tempfile
+import sys, os, glob, re, json, subprocess, tempfile
 from datetime import datetime, timezone
 import numpy as np
 
@@ -104,6 +104,32 @@ def boost_accent(r, g, b):
     return (int(r2 * 255), int(g2 * 255), int(b2 * 255))
 
 
+def write_fullshow_sidecar(out_path, files, durations):
+    """`<out_path>.json`: each song's render span on the full-show timeline (straight concat, no
+    overlap) plus its real-world start and its own per-song sidecar, if build_song wrote one --
+    so chapter timestamps and "which clip is this" never need re-deriving."""
+    songs, t = [], 0.0
+    for (num, path, title), dur in zip(files, durations):
+        song_json = path + ".json"
+        songs.append({
+            "song_num": f"{num:02d}", "title": title, "video_file": os.path.basename(path),
+            "render_time_start": round(t, 3), "render_time_end": round(t + dur, 3), "duration": round(dur, 3),
+            "real_world_start": ffprobe_creation_time(path) or None,
+            "source_json": os.path.basename(song_json) if os.path.exists(song_json) else None,
+        })
+        t += dur
+    sidecar = {
+        "video": os.path.basename(out_path),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "concat demuxer (-c copy) of the per-song files after a video-only title-card pass, in song-number order",
+        "total_duration": round(t, 3),
+        "total_songs": len(songs),
+        "songs": songs,
+    }
+    with open(out_path + ".json", "w", encoding="utf-8") as fh:
+        json.dump(sidecar, fh, indent=2, ensure_ascii=False)
+
+
 def main():
     videos_dir = sys.argv[1]
     out_path = sys.argv[2]
@@ -122,6 +148,31 @@ def main():
     files.sort(key=lambda x: x[0])
     if not files:
         raise SystemExit(f"No 'NN-Title.mp4' files found in {videos_dir}")
+
+    # A killed/crashed build_song run can leave a TRUNCATED song file that's still a valid,
+    # playable mp4 -- it would concat silently (lesson from vivecut's interrupted-batch gotcha).
+    # Where build_song wrote a sidecar, its planned duration is the reference: refuse to assemble
+    # a show from a song file that doesn't match its own plan.
+    bad = []
+    for _, path, title in files:
+        if os.path.exists(path + ".json"):
+            with open(path + ".json", encoding="utf-8") as fh:
+                planned = json.load(fh).get("duration")
+            real = ffprobe_duration(path)
+            if planned and abs(real - planned) > 0.1:
+                bad.append(f"{os.path.basename(path)}: file {real:.2f}s vs planned {planned:.2f}s")
+        else:
+            print(f"NOTE: no sidecar for {os.path.basename(path)} -- can't verify it isn't truncated", flush=True)
+    if bad:
+        raise SystemExit("Refusing to build full show, song file(s) don't match their build plan "
+                         "(truncated/interrupted render?):\n  " + "\n  ".join(bad))
+
+    if "--json-only" in sys.argv:
+        # backfill the sidecar for a full show already built from these exact song files: the
+        # title pass re-encodes video only (audio copied), so each segment keeps its song's length
+        write_fullshow_sidecar(out_path, files, [ffprobe_duration(p) for _, p, _ in files])
+        print("WROTE:", out_path + ".json")
+        return
 
     tmp_dir = os.path.join(videos_dir, "_fullshow_tmp")
     os.makedirs(tmp_dir, exist_ok=True)
@@ -216,6 +267,9 @@ def main():
         list_path = os.path.join(tmp_dir, "_concat.txt")
         with open(list_path, "w", encoding="utf-8") as fh:
             for t in titled:
+                # absolute: the concat demuxer resolves relative entries against the list file's
+                # own folder, so a relative videos_dir would otherwise get doubled
+                t = os.path.abspath(t)
                 fh.write(f"file '{t.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'\n")
 
         first_ct = ffprobe_creation_time(files[0][1])
@@ -232,6 +286,7 @@ def main():
             dt = datetime.strptime(first_ct, "%Y-%m-%dT%H:%M:%S.%fZ")
             epoch = dt.replace(tzinfo=timezone.utc).timestamp()
             os.utime(out_path, (epoch, epoch))
+        write_fullshow_sidecar(out_path, files, [ffprobe_duration(t) for t in titled])
         print("DONE:", out_path)
     finally:
         for t in titled:
